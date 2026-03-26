@@ -1,0 +1,60 @@
+name: Build trpc package on tag
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-and-package:
+    name: Build and pack nest-trpc-native
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate tag matches package version
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/trpc/package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag version v$TAG_VERSION does not match packages/trpc version $PACKAGE_VERSION"
+            exit 1
+          fi
+
+      - name: Build package
+        run: npm run build --workspace nest-trpc-native
+
+      - name: Pack package tarball
+        run: mkdir -p artifacts && npm pack --workspace nest-trpc-native --pack-destination artifacts
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: nest-trpc-native-${{ github.ref_name }}
+          path: artifacts/*.tgz
+          if-no-files-found: error
+
+      - name: Attach package tarball to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" artifacts/*.tgz --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artifacts/*.tgz --generate-notes
+          fi
